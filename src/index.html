@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Supabase To-Do App</title>
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Supabase Client CDN -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+</head>
+<body class="bg-slate-900 text-slate-100 min-h-screen flex items-center justify-center p-4">
+
+  <div class="w-full max-w-lg bg-slate-800 rounded-2xl shadow-xl p-6 border border-slate-700">
+    <h1 class="text-2xl font-bold text-center mb-6 text-white tracking-wide">
+      Supabase To-Do
+    </h1>
+
+    <!-- Add Task Form -->
+    <form id="todo-form" class="flex gap-2 mb-6">
+      <input
+        type="text"
+        id="todo-input"
+        placeholder="Add a new task..."
+        class="flex-1 bg-slate-700 border border-slate-600 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 text-white placeholder-slate-400"
+        required
+      />
+      <button
+        type="submit"
+        class="bg-indigo-600 hover:bg-indigo-500 text-white px-5 py-2.5 rounded-lg text-sm font-medium transition cursor-pointer"
+      >
+        Add
+      </button>
+    </form>
+
+    <!-- Task List -->
+    <ul id="todo-list" class="space-y-3">
+      <!-- Injected dynamically via JS -->
+    </ul>
+  </div>
+
+  <script>
+    // ==========================================
+    // 1. CONFIGURATION
+    // Replace with your Supabase Project credentials:
+    // ==========================================
+    const SUPABASE_URL = "https://YOUR_PROJECT_REF.supabase.co";
+    const SUPABASE_ANON_KEY = "YOUR_ANON_PUBLIC_KEY";
+
+    const { createClient } = supabase;
+    const client = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+    const todoList = document.getElementById("todo-list");
+    const todoForm = document.getElementById("todo-form");
+    const todoInput = document.getElementById("todo-input");
+
+    let editingId = null;
+
+    // ==========================================
+    // 2. READ / LIST TASKS
+    // ==========================================
+    async function fetchTodos() {
+      todoList.innerHTML = `<li class="text-center text-slate-400 py-4 text-sm">Loading tasks...</li>`;
+
+      const { data, error } = await client
+        .from("todos")
+        .select("*")
+        .order("created_at", { ascending: false });
+
+      if (error) {
+        todoList.innerHTML = `<li class="text-center text-rose-400 py-4 text-sm">Error: ${error.message}</li>`;
+        return;
+      }
+
+      if (!data || data.length === 0) {
+        todoList.innerHTML = `<li class="text-center text-slate-500 py-4 text-sm">No tasks yet. Add one above!</li>`;
+        return;
+      }
+
+      renderTodos(data);
+    }
+
+    function renderTodos(todos) {
+      todoList.innerHTML = "";
+
+      todos.forEach((todo) => {
+        const isEditing = editingId === todo.id;
+        const li = document.createElement("li");
+        li.className =
+          "flex items-center justify-between gap-3 p-3 bg-slate-700/50 rounded-xl border border-slate-700 hover:border-slate-600 transition";
+
+        if (isEditing) {
+          // Edit Mode
+          li.innerHTML = `
+            <input 
+              type="text" 
+              id="edit-input-${todo.id}" 
+              value="${escapeHtml(todo.title)}" 
+              class="flex-1 bg-slate-600 border border-slate-500 rounded px-2.5 py-1 text-sm text-white focus:outline-none focus:ring-1 focus:ring-indigo-500"
+            />
+            <button onclick="saveEdit(${todo.id})" class="text-emerald-400 hover:text-emerald-300 text-xs font-semibold px-2 py-1 cursor-pointer">Save</button>
+            <button onclick="cancelEdit()" class="text-slate-400 hover:text-slate-300 text-xs px-2 py-1 cursor-pointer">Cancel</button>
+          `;
+        } else {
+          // Normal View Mode (uses the 'done' column)
+          li.innerHTML = `
+            <input 
+              type="checkbox" 
+              ${todo.done ? "checked" : ""} 
+              onchange="toggleDone(${todo.id}, ${todo.done})"
+              class="w-4 h-4 rounded border-slate-500 accent-indigo-600 cursor-pointer"
+            />
+            <span class="flex-1 text-sm break-all ${todo.done ? "line-through text-slate-400" : "text-slate-200"}">
+              ${escapeHtml(todo.title)}
+            </span>
+            <div class="flex items-center gap-2">
+              <button onclick="startEdit(${todo.id})" class="text-slate-400 hover:text-indigo-400 text-xs transition cursor-pointer">Edit</button>
+              <button onclick="deleteTodo(${todo.id})" class="text-slate-400 hover:text-rose-400 text-xs transition cursor-pointer">Delete</button>
+            </div>
+          `;
+        }
+
+        todoList.appendChild(li);
+      });
+    }
+
+    // ==========================================
+    // 3. CREATE / ADD TASK
+    // ==========================================
+    todoForm.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const title = todoInput.value.trim();
+      if (!title) return;
+
+      const { error } = await client
+        .from("todos")
+        .insert([{ title, done: false }]);
+
+      if (error) {
+        alert("Error adding task: " + error.message);
+      } else {
+        todoInput.value = "";
+        fetchTodos();
+      }
+    });
+
+    // ==========================================
+    // 4. UPDATE / EDIT TASK
+    // ==========================================
+    function startEdit(id) {
+      editingId = id;
+      fetchTodos();
+    }
+
+    function cancelEdit() {
+      editingId = null;
+      fetchTodos();
+    }
+
+    async function saveEdit(id) {
+      const input = document.getElementById(`edit-input-${id}`);
+      const newTitle = input.value.trim();
+      if (!newTitle) return;
+
+      const { error } = await client
+        .from("todos")
+        .update({ title: newTitle })
+        .eq("id", id);
+
+      if (error) {
+        alert("Error saving task: " + error.message);
+      } else {
+        editingId = null;
+        fetchTodos();
+      }
+    }
+
+    async function toggleDone(id, currentStatus) {
+      const { error } = await client
+        .from("todos")
+        .update({ done: !currentStatus })
+        .eq("id", id);
+
+      if (error) {
+        alert("Error updating status: " + error.message);
+      } else {
+        fetchTodos();
+      }
+    }
+
+    // ==========================================
+    // 5. DELETE TASK
+    // ==========================================
+    async function deleteTodo(id) {
+      const { error } = await client
+        .from("todos")
+        .delete()
+        .eq("id", id);
+
+      if (error) {
+        alert("Error deleting task: " + error.message);
+      } else {
+        fetchTodos();
+      }
+    }
+
+    // Helper function to prevent XSS
+    function escapeHtml(str) {
+      return str
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
+    }
+
+    // Initial fetch on load
+    fetchTodos();
+  </script>
+</body>
+</html>
